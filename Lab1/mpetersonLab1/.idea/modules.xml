@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectModuleManager">
+    <modules>
+      <module fileurl="file://$PROJECT_DIR$/../../../github/CSCD372_Labs/Lab1/mpetersonLab1/app/app.iml" filepath="$PROJECT_DIR$/../../../github/CSCD372_Labs/Lab1/mpetersonLab1/app/app.iml" />
+      <module fileurl="file://$PROJECT_DIR$/../../../github/CSCD372_Labs/Lab1/mpetersonLab1/mpetersonLab1.iml" filepath="$PROJECT_DIR$/../../../github/CSCD372_Labs/Lab1/mpetersonLab1/mpetersonLab1.iml" />
+    </modules>
+  </component>
+</project>
