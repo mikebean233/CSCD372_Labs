@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources >
+    <string-array name="mass_shape_types">
+        <item>@string/mass_shape_type_Rectangle</item>
+        <item>@string/mass_shape_type_RoundedRectangle</item>
+        <item>@string/mass_shape_type_Circle</item>
+        <item>@string/mass_shape_type_Picture</item>
+    </string-array>
+    <string name="mass_shape_type_Rectangle">Rectangle</string>
+    <string name="mass_shape_type_RoundedRectangle">Rounded Rectangle</string>
+    <string name="mass_shape_type_Circle">Circle</string>
+    <string name="mass_shape_type_Picture">Picture</string>
+</resources>

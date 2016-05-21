@@ -1,0 +1,23 @@
+<resources>
+    <string name="app_name">Lab7</string>
+    <string name="action_about">About</string>
+    <string name="action_settings">Settings</string>
+
+    <!-- preference keys -->
+    <string name="preferenceKey_springStiffness">spring_stiffness</string>
+    <string name="preferenceKey_springStiffness_default" type="fraction">1.5</string>
+
+    <string name="preferenceKey_springCoilCount">spring_coilcount</string>
+    <string name="preferenceKey_springCoilCount_default">11</string>
+
+    <string name="preferenceKey_springInitDisp">spring_initdisp</string>
+    <string name="preferenceKey_springInitDisp_default">0</string>
+
+    <string name="preferenceKey_massShape">mass_shape</string>
+    <string name="preferenceKey_massShape_default">Rectangle</string>
+
+    <string name="shape_type_idTest">blah</string>
+
+
+
+</resources>

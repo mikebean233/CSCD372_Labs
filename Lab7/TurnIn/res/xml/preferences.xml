@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:custom="http://schemas.android.com/apk/res-auto">
+    <EditTextPreference
+        android:key="@string/preferenceKey_springStiffness"
+        android:defaultValue="@string/preferenceKey_springStiffness_default"
+        android:inputType="numberDecimal"
+        android:title="Spring Stiffness"
+    />
+
+    <michaelpeterson.lab7.NumberPickerPreference
+        android:key="@string/preferenceKey_springCoilCount"
+        android:defaultValue="@string/preferenceKey_springCoilCount_default"
+        android:title="number of coils"
+        custom:min="8"
+        custom:max="14"
+        custom:wrap="false"
+    />
+
+    <michaelpeterson.lab7.NumberPickerPreference
+        android:key="@string/preferenceKey_springInitDisp"
+        android:title="spring initial displacement"
+        android:defaultValue="@string/preferenceKey_springInitDisp_default"
+        custom:min="0"
+        custom:max="16"
+        custom:wrap="false"
+    />
+
+    <ListPreference
+        android:key="@string/preferenceKey_massShape"
+        android:title="mass shape"
+        android:summary="%s"
+        android:entries="@array/mass_shape_types"
+        android:entryValues="@array/mass_shape_types"
+        android:defaultValue="@string/preferenceKey_massShape_default"
+        />
+</PreferenceScreen>
