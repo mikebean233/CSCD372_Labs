@@ -20,8 +20,12 @@ import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class GameFieldView extends View implements Runnable, View.OnTouchListener {
-    private GameFieldView _this;
+    private enum GameState{paused, inPlay, over, newGame}
+    private enum SiloGroup{left, center, right, none}
 
+    private GameState _state;
+    private SiloGroup _siloPreference;
+    private GameFieldView _this;
     private ArrayList<City> _cities;
     private ArrayList<Silo> _silos;
     private ArrayList<Renderable> _renderList;
@@ -31,9 +35,13 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
     private float _currentScaleFactor;
     private Point _lastKnownSizeDimensions;
     private long _timeSpentPaused;
+    private boolean _infinitePlayerMissiles = true;
     private ArrayList<Missile> _enemyMissiles;
     private ArrayList<Missile> _missilesInFlight;
     private ArrayList<GroundAsset> _groundAssets;
+    private int _playerMissileSpeed;
+    private int _enemyMissileSpeed;
+    private int _approxEnemyMissilesPerSecond;
 
     public double calcDistance(Point a, Point b)
     {
@@ -81,8 +89,43 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
         initialize();
     }
 
+    private void updateGameItems(){
+        long currentAdjustedTime = getAdjustedTimeInMillis();
+
+        ArrayList<Missile> explodingMissiles = new ArrayList<>();
+        ArrayList<Missile> launchingMissiles = new ArrayList<>();
+        // Update our missiles and check for collisions
+        for (Missile thisMissile : _missilesInFlight) {
+            // Update the missile
+            thisMissile.timerCLick(currentAdjustedTime);
+
+            // Check to see if any exploding missiles are hitting ground assets
+            if(thisMissile.isExploding()){
+                explodingMissiles.add(thisMissile);
+                if(thisMissile.getType() == MissileType.enemy){
+                    for(GroundAsset thisAsset : _groundAssets)
+                        thisAsset.testMissileHit(thisMissile);
+                }
+            }
+            else if(thisMissile.isLaunching())
+                launchingMissiles.add(thisMissile);
+        }
+
+        // Detonate any missiles that are being hit by an explosion
+        for(Missile explodingMissile : explodingMissiles){
+            for(Missile launchingMissile : launchingMissiles){
+                if (explodingMissile.checkForCollision(launchingMissile.getLocation())) {
+                    launchingMissile.detonate();
+                }
+            }
+        }
+    }
+
     @Override
     protected void onDraw(Canvas canvas){
+        if(_state == GameState.inPlay)
+            updateGameItems();
+
         for (Renderable thisRenderable : _renderList)
             thisRenderable.render(canvas, _currentScaleFactor);
     }
@@ -174,6 +217,12 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
         _lastKnownSizeDimensions = _originalDimensions.clone();
         _currentScaleFactor = 1.0f;
         setLayerType(this.LAYER_TYPE_SOFTWARE, null);
+        _state = GameState.inPlay;
+        _siloPreference = SiloGroup.center;
+        _infinitePlayerMissiles = false;
+        _missilesInFlight = new ArrayList<>();
+        _playerMissileSpeed = 100;
+        _enemyMissileSpeed = 15;
 
         // Enemy Missiles
         _enemyMissiles = new ArrayList<>();
@@ -197,7 +246,6 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
 
 
 
-        _missilesInFlight = new ArrayList<>();
         for (Missile thisMissile : _enemyMissiles)
             registerMissile(thisMissile);
     }
@@ -227,42 +275,43 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
         _silos = new ArrayList<>();
 
         // Left
-        _silos.add(new Silo(new Point(20.5f, 208.5f), SiloGroup.left));
-        _silos.add(new Silo(new Point(17.5f, 211.5f), SiloGroup.left));
-        _silos.add(new Silo(new Point(23.5f, 211.5f), SiloGroup.left));
-        _silos.add(new Silo(new Point(14.5f, 214.5f), SiloGroup.left));
-        _silos.add(new Silo(new Point(20.5f, 214.5f), SiloGroup.left));
-        _silos.add(new Silo(new Point(26.5f, 214.5f), SiloGroup.left));
-        _silos.add(new Silo(new Point(11.5f, 217.5f), SiloGroup.left));
-        _silos.add(new Silo(new Point(17.5f, 217.5f), SiloGroup.left));
-        _silos.add(new Silo(new Point(23.5f, 217.5f), SiloGroup.left));
-        _silos.add(new Silo(new Point(29.5f, 217.5f), SiloGroup.left));
+        _silos.add(new Silo(new Point(20.5f, 208.5f), SiloGroup.left, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(17.5f, 211.5f), SiloGroup.left, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(23.5f, 211.5f), SiloGroup.left, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(14.5f, 214.5f), SiloGroup.left, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(20.5f, 214.5f), SiloGroup.left, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(26.5f, 214.5f), SiloGroup.left, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(11.5f, 217.5f), SiloGroup.left, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(17.5f, 217.5f), SiloGroup.left, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(23.5f, 217.5f), SiloGroup.left, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(29.5f, 217.5f), SiloGroup.left, _infinitePlayerMissiles));
         // Center
-        _silos.add(new Silo(new Point(123.5f, 208.5f), SiloGroup.center));
-        _silos.add(new Silo(new Point(120.5f, 211.5f), SiloGroup.center));
-        _silos.add(new Silo(new Point(126.5f, 211.5f), SiloGroup.center));
-        _silos.add(new Silo(new Point(117.5f, 214.5f), SiloGroup.center));
-        _silos.add(new Silo(new Point(123.5f, 214.5f), SiloGroup.center));
-        _silos.add(new Silo(new Point(129.5f, 214.5f), SiloGroup.center));
-        _silos.add(new Silo(new Point(114.5f, 217.5f), SiloGroup.center));
-        _silos.add(new Silo(new Point(120.5f, 217.5f), SiloGroup.center));
-        _silos.add(new Silo(new Point(126.5f, 217.5f), SiloGroup.center));
-        _silos.add(new Silo(new Point(132.5f, 217.5f), SiloGroup.center));
+        _silos.add(new Silo(new Point(123.5f, 208.5f), SiloGroup.center, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(120.5f, 211.5f), SiloGroup.center, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(126.5f, 211.5f), SiloGroup.center, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(117.5f, 214.5f), SiloGroup.center, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(123.5f, 214.5f), SiloGroup.center, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(129.5f, 214.5f), SiloGroup.center, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(114.5f, 217.5f), SiloGroup.center, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(120.5f, 217.5f), SiloGroup.center, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(126.5f, 217.5f), SiloGroup.center, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(132.5f, 217.5f), SiloGroup.center, _infinitePlayerMissiles));
         // Right
-        _silos.add(new Silo(new Point(240.5f, 208.5f), SiloGroup.right));
-        _silos.add(new Silo(new Point(237.5f, 211.5f), SiloGroup.right));
-        _silos.add(new Silo(new Point(243.5f, 211.5f), SiloGroup.right));
-        _silos.add(new Silo(new Point(234.5f, 214.5f), SiloGroup.right));
-        _silos.add(new Silo(new Point(240.5f, 214.5f), SiloGroup.right));
-        _silos.add(new Silo(new Point(246.5f, 214.5f), SiloGroup.right));
-        _silos.add(new Silo(new Point(231.5f, 217.5f), SiloGroup.right));
-        _silos.add(new Silo(new Point(237.5f, 217.5f), SiloGroup.right));
-        _silos.add(new Silo(new Point(243.5f, 217.5f), SiloGroup.right));
-        _silos.add(new Silo(new Point(249.5f, 217.5f), SiloGroup.right));
+        _silos.add(new Silo(new Point(240.5f, 208.5f), SiloGroup.right, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(237.5f, 211.5f), SiloGroup.right, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(243.5f, 211.5f), SiloGroup.right, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(234.5f, 214.5f), SiloGroup.right, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(240.5f, 214.5f), SiloGroup.right, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(246.5f, 214.5f), SiloGroup.right, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(231.5f, 217.5f), SiloGroup.right, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(237.5f, 217.5f), SiloGroup.right, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(243.5f, 217.5f), SiloGroup.right, _infinitePlayerMissiles));
+        _silos.add(new Silo(new Point(249.5f, 217.5f), SiloGroup.right, _infinitePlayerMissiles));
 
-        for(Silo thisSilo : _silos)
+        for(Silo thisSilo : _silos) {
             registerGroundAsset(thisSilo);
-
+            registerMissile(thisSilo.getMissile());
+        }
     }
 
     private Point screenToGameCoords(Point screenPos){
@@ -275,39 +324,46 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
 
     @Override
     public void run() {
-        try {
-            // Update our missiles and check for collisions
-            for (Missile thisMissile : _missilesInFlight) {
-                thisMissile.timerCLick(getAdjustedTimeInMillis());
-
-                // Are there any collisions with ground assets?
-                for(GroundAsset thisAsset : _groundAssets){
-                   thisAsset.testMissileHit(thisMissile);
-                }
-            }
-
-            Missile[] tmpMissileArray = (Missile[])_missilesInFlight.toArray();
-            int startIndex = 0;
-
-            for(; startIndex < tmpMissileArray.length; ++startIndex){
-                for(int i = startIndex + 1; startIndex < tmpMissileArray.length - 1; ++i){
-                    if(tmpMissileArray[startIndex].checkForCollision(tmpMissileArray[i].getLocation())){
-                        tmpMissileArray[startIndex].detinate();
-                        tmpMissileArray[i].detinate();
-                    }
-                }
-            }
-}
-        catch(Exception ex)
-        {
-            Log.d("run()", "", ex);
-        }
         this.invalidate();
     }
 
+    private boolean launchRandomEnemyMissile(){
+        // Get a list of target candidates
+        ArrayList<GroundAsset> candidates = new ArrayList<>();
+        for(GroundAsset thisAsset : _groundAssets)
+            if(thisAsset._state == GroundAssetState.visible)
+                candidates.add(thisAsset);
+
+        // Pick a random visible target on the ground and launch a missile at it
+        if(!candidates.isEmpty()) {
+            GroundAsset chosenTarget = candidates.get((new Random()).nextInt(candidates.size()));
+            Point randomStartLoc = new Point((new Random()).nextFloat() * _originalDimensions.getX(), 0);
+            for(Missile thisMissile : _enemyMissiles)
+                if(thisMissile.tryLaunch(randomStartLoc, chosenTarget.getPosition(),_enemyMissileSpeed))
+                    return true;
+
+        }
+        return false;
+    }
+
     private void handleTouch(Point position){
-        int randomNumber = (new Random()).nextInt(_enemyMissiles.size());
-        _enemyMissiles.get(randomNumber).beginLaunch(new Point(0,0), position, 30);
+        // in play
+        if(_state == GameState.inPlay) {
+            launchRandomEnemyMissile();
+
+            // Get a list of qualifying silos to randomly choose from
+            ArrayList<Silo> siloOptions = new ArrayList<>();
+            for(Silo thisSilo : _silos){
+                if(_siloPreference == SiloGroup.none || thisSilo.getGroup() == _siloPreference)
+                    siloOptions.add(thisSilo);
+            }
+
+            // Pick a random silo and launch from it
+            Silo chosenSilo;
+            while(!siloOptions.isEmpty() && !(chosenSilo = siloOptions.get((new Random()).nextInt(siloOptions.size()))).tryLaunchMissile(position,_playerMissileSpeed) ){
+                siloOptions.remove(chosenSilo);
+            }
+        }
     }
 
     @Override
@@ -338,6 +394,7 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
         switch(objectType){
             case crosshair:
                 /*
+                // Plus
                 points.add(new Point(-.5f, -.5f)); // 0
                 points.add(new Point(-.5f,-3.5f)); // 1
                 points.add(new Point( .5f,-3.5f)); // 2
@@ -351,6 +408,7 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
                 points.add(new Point(-3.5f, .5f)); // 10
                 points.add(new Point(-3.5f,-.5f)); // 11
                 */
+                // X
                 points.add(new Point(-1.5f, -1.5f));
                 points.add(new Point( 1.5f,  1.5f));
                 points.add(new Point( 0.0f,  0.0f));
@@ -620,7 +678,7 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
 
     /* ---------------------------------------------------------------*
     *                         Ground Asset                            *
-    * ---------------------------------------------------------------*/
+    * ----------------------------------------------------------------*/
 
     private enum GroundAssetState{visible, invisible}
     private abstract class GroundAsset implements Renderable<GroundAsset>{
@@ -647,7 +705,7 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
 
             if(missile.checkForCollision(_position) && _state == GroundAssetState.visible){
                 missileHit();
-                missile.detinate();
+                missile.detonate();
                 return true;
             }
             return false;
@@ -657,17 +715,29 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
         protected abstract void missileHit();
     }
 
-    private enum SiloGroup{left, center, right}
-
+    // Silo
     private class Silo extends GroundAsset{
         private Missile _missile;
         private SiloGroup _group;
+        private boolean _reusable;
 
-        public Silo(Point position, SiloGroup group){
+        public Silo(Point position, SiloGroup group, boolean reusable){
             super(position);
             _group = group;
+            _reusable = reusable;
             _missile = new Missile(MissileType.player,false,15,_this);
             _path = new PositionedPath( buildPath(VisibleGameObject.silo), position, PaintBuilder.buildPaint(Paint.Style.FILL, Color.BLUE, 1));
+        }
+
+        public Missile getMissile(){return _missile;}
+
+        public SiloGroup getGroup(){return _group;}
+
+        public boolean tryLaunchMissile(Point destination, double speed){
+            boolean wasSuccess = _state == GroundAssetState.visible && _missile.tryLaunch(_position, destination, speed);
+            if(!_reusable && wasSuccess)
+                _state = GroundAssetState.invisible;
+            return wasSuccess;
         }
 
         protected void missileHit(){
@@ -721,7 +791,7 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
         public boolean isLaunching() { return _state == MissileState.launching; }
         public boolean isDead() { return _state == MissileState.dead; }
 
-        public void detinate()
+        public void detonate()
         {
             if(_state != MissileState.launching)
                 return;
@@ -731,7 +801,7 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
             //_explosionSoundPlayer.Play();
         }
 
-        public void beginLaunch(Point launchpadLocation, Point destination, double speed)
+        public boolean tryLaunch(Point launchpadLocation, Point destination, double speed)
         {
             if (_state == MissileState.ready)
             {
@@ -758,7 +828,9 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
                     _launchAngle = Math.atan((_launchpadLocation.getY() - _destination.getY()) / (_destination.getX() - _launchpadLocation.getX()));
 
                 _explosion = new Circle(destination.clone(), PaintBuilder.buildPaint(Paint.Style.FILL, Color.WHITE, 1),1);
+                return true;
             }
+            return false;
         }
 
         public void timerCLick(double currentTimeInMillis) {
@@ -784,7 +856,7 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
 
                 // determine if the missile has reached its destination
                 if (currentTimeInMillis >= _expectedArrivalTime || calcDistance(_currentLocation, _destination) < 2) {
-                    detinate();
+                    detonate();
                     return;
                 }
 
@@ -823,13 +895,14 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
             }
 
         }
-        public Circle getGetExplosion() { return _explosion; }
+        public Circle getExplosion() { return _explosion; }
+        public MissileType getType(){return _type;}
         public Point getLocation() { return _currentLocation; }
         public boolean checkForCollision(Point otherObjectLocation){
             if(otherObjectLocation == null)
                 throw new NullPointerException();
 
-            return (_state == MissileState.launching || _state == MissileState.exploding) && calcDistance(_currentLocation, otherObjectLocation) <= _explosion.getRadius();
+            return _state == MissileState.exploding && calcDistance(_currentLocation, otherObjectLocation) <= _explosion.getRadius();
         }
         public Missile(MissileType type, boolean relaunchable, double blastRadius, GameFieldView caller) {
             _caller = caller;
@@ -870,7 +943,7 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
                 _explosion.render(canvas, scale);
             }
 
-            if(_state == MissileState.launching && _type == MissileType.enemy)
+            if(_state == MissileState.launching && _type == MissileType.player)
                 _crosshair.render(canvas, scale);
 
             return this;
