@@ -9,7 +9,7 @@ import android.util.Log;
 public class PositionedPath extends Path implements Renderable<PositionedPath>{
     protected Point _position;
     protected Path _originalPath;
-    //private float _scale;
+    protected float _scale;
 
     protected Paint _paint;
 
@@ -20,13 +20,13 @@ public class PositionedPath extends Path implements Renderable<PositionedPath>{
         _originalPath = path;
 
         _position = position;
-        //_scale = scale;
+        _scale = 1f;
         _paint = paint;
     }
 
     public PositionedPath render(Canvas canvas, float scale){
         this.set(_originalPath);
-
+        _scale = scale;
         Matrix thisMatrix = new Matrix();
         thisMatrix.setScale(scale, scale);
         this.transform(thisMatrix);

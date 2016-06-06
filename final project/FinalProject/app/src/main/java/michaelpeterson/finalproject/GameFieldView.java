@@ -6,43 +6,89 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.media.AudioManager;
+import android.media.SoundPool;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.MotionEvent;
 import android.view.View;
 
 import java.util.ArrayList;
-import java.util.Random;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Timer;
 import java.util.TimerTask;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.LockSupport;
-import java.util.concurrent.locks.ReentrantLock;
 
 public class GameFieldView extends View implements Runnable, View.OnTouchListener {
-    private enum GameState{paused, inPlay, over, newGame}
+    private enum GameState{
+        paused(0),
+        inPlay(1),
+        gameOver(2),
+        newGame(3),
+        levelStart(4),
+        levelResults(5);
+
+        private final int _value;
+        private GameState(int value){
+            _value = value;
+        }
+
+        @Override
+        public String toString(){
+            switch(_value){
+                case 0:
+                    return "paused";
+                case 1:
+                    return "inPlay";
+                case 2:
+                    return "gameOver";
+                case 3:
+                    return "newGame";
+                case 4:
+                    return "levelStart";
+                case 5:
+                    return "levelResults";
+                default:
+                    return "invalid";
+            }
+        }
+    }
+
+
     private enum SiloGroup{left, center, right, none}
 
     private GameState _state;
-    private SiloGroup _siloPreference;
+    private GameLevel _currentLevel;
+    //private SiloGroup _siloPreference;
     private GameFieldView _this;
     private ArrayList<City> _cities;
     private ArrayList<Silo> _silos;
     private ArrayList<Renderable> _renderList;
+    private ArrayList<Missile> _enemyMissiles;
+    private ArrayList<Missile> _allMissiles;
+    private ArrayList<GroundAsset> _groundAssets;
+    private ArrayList<GameLevel> _levels;
     private PositionedPath _terrainPath;
     private Point _originalDimensions = new Point(256, 231);
+    private Point _lastKnownSizeDimensions;
     private float _aspectRatio;
     private float _currentScaleFactor;
-    private Point _lastKnownSizeDimensions;
     private long _timeSpentPaused;
+    private long _currentLevelStartTime;
     private boolean _infinitePlayerMissiles = true;
-    private ArrayList<Missile> _enemyMissiles;
-    private ArrayList<Missile> _missilesInFlight;
-    private ArrayList<GroundAsset> _groundAssets;
     private int _playerMissileSpeed;
     private int _enemyMissileSpeed;
-    private int _approxEnemyMissilesPerSecond;
-
+    private int _noLevels;
+    private int _currentLevelNumber;
+    private int _soundIdBoom;
+    private int _soundIdLaunch;
+    private int _currentScore;
+    private int _stoppedMissileCount;
+    private GameState _stateBeforePause;
+    private HashMap<GameState, Long> _stateStartTime;
+    private HashMap<GameState, Long> _stateLength; // (seconds) obviously this does not apply for pause and inPlay
+    private HashMap<GameState, GameState> _stateTransitionMap;
+    private SoundPool _soundPool;
     public double calcDistance(Point a, Point b)
     {
         return Math.sqrt(Math.pow(b.getX() - a.getX(), 2.0f) + Math.pow(b.getY() - a.getY(), 2.0f));
@@ -89,42 +135,116 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
         initialize();
     }
 
+    private Long changeState(GameState newState){
+        Log.d("--------------", _state + " -> " + newState);
+        long oldTime = _stateStartTime.get(_state);
+        _stateStartTime.put(_state = newState, getAdjustedTimeInMillis());
+        return oldTime;
+    }
+
+    private long getTimeInCurrentState(){
+        if(_stateStartTime.containsKey(_state))
+            return getAdjustedTimeInMillis() - _stateStartTime.get(_state);
+
+        return -1;
+    }
+
     private void updateGameItems(){
         long currentAdjustedTime = getAdjustedTimeInMillis();
+        boolean haveActiveMissiles = false;
 
-        ArrayList<Missile> explodingMissiles = new ArrayList<>();
-        ArrayList<Missile> launchingMissiles = new ArrayList<>();
-        // Update our missiles and check for collisions
-        for (Missile thisMissile : _missilesInFlight) {
-            // Update the missile
-            thisMissile.timerCLick(currentAdjustedTime);
+        // inPlay
+        if(_state == GameState.inPlay){
+            ArrayList<Missile> explodingMissiles = new ArrayList<>();
+            ArrayList<Missile> launchingMissiles = new ArrayList<>();
 
-            // Check to see if any exploding missiles are hitting ground assets
-            if(thisMissile.isExploding()){
-                explodingMissiles.add(thisMissile);
-                if(thisMissile.getType() == MissileType.enemy){
-                    for(GroundAsset thisAsset : _groundAssets)
-                        thisAsset.testMissileHit(thisMissile);
+            // Update our missiles and check for collisions
+            for (Missile thisMissile : _allMissiles) {
+                // Update the missile
+                thisMissile.timerCLick(currentAdjustedTime);
+
+                // Check to see if any exploding missiles are hitting ground assets
+                if(thisMissile.isExploding()){
+                    haveActiveMissiles = true;
+                    explodingMissiles.add(thisMissile);
+                    if(thisMissile.getType() == MissileType.enemy){
+                        for(GroundAsset thisAsset : _groundAssets)
+                            thisAsset.testMissileHit(thisMissile);
+                    }
+                }
+                else if(thisMissile.isLaunching()) {
+                    launchingMissiles.add(thisMissile);
+                    haveActiveMissiles = true;
                 }
             }
-            else if(thisMissile.isLaunching())
-                launchingMissiles.add(thisMissile);
+
+            // Detonate any missiles that are being hit by an explosion
+            for(Missile explodingMissile : explodingMissiles){
+                for(Missile launchingMissile : launchingMissiles){
+                    if(launchingMissile.getType() == MissileType.enemy && explodingMissile.checkForCollision(launchingMissile.getLocation())) {
+                        launchingMissile.detonate();
+                        ++_stoppedMissileCount;
+                    }
+                }
+            }
+
+            // Launch enemy missiles
+            int noMissilesDue = _currentLevel.getOverdueMissileCount(currentAdjustedTime - _currentLevelStartTime);
+            while(noMissilesDue-- > 0)
+                launchRandomEnemyMissile();
+
+
+
         }
 
-        // Detonate any missiles that are being hit by an explosion
-        for(Missile explodingMissile : explodingMissiles){
-            for(Missile launchingMissile : launchingMissiles){
-                if (explodingMissile.checkForCollision(launchingMissile.getLocation())) {
-                    launchingMissile.detonate();
-                }
+        //level Start
+        if(_state == GameState.levelStart){
+
+        }
+
+
+
+
+        // Update the Game State
+
+        // Check to see if the game is over or the level is finished
+        if(_state == GameState.inPlay) {
+            int standingCityCount = 0;
+            for (City thisCity : _cities)
+                standingCityCount += (thisCity.getState() == GroundAssetState.visible) ? 1 : 0;
+
+            // Check to see if the level is finished (all enemy missiles have been launched and no missiles are active)
+            if(!haveActiveMissiles){
+                if (standingCityCount == 0)
+                    changeState(GameState.gameOver);
+                else if(_currentLevel.isFinished())
+                    startNewLevel();
+
+                return;
+            }
+        }
+
+        // If we are in a new game, reset the score and start at level 1
+        if(_state == GameState.newGame){
+            startNewGame();
+            return;
+        }
+
+        // If we are in a timed game state (levelStart, revelResults, or gameOver) and the state should be finished, move on to the next state
+
+        if(_state != GameState.inPlay) {
+            try {
+                if (getTimeInCurrentState() >= _stateLength.get(_state))
+                    changeState(_stateTransitionMap.get(_state));
+            } catch (Exception ex) {
+                Log.d("", "", ex);
             }
         }
     }
 
     @Override
     protected void onDraw(Canvas canvas){
-        if(_state == GameState.inPlay)
-            updateGameItems();
+        updateGameItems();
 
         for (Renderable thisRenderable : _renderList)
             thisRenderable.render(canvas, _currentScaleFactor);
@@ -155,8 +275,8 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
     public boolean registerMissile(Missile thisMissile){
         if(thisMissile == null)
             throw new NullPointerException();
-           if(!_missilesInFlight.contains(thisMissile)) {
-                _missilesInFlight.add(thisMissile);
+           if(!_allMissiles.contains(thisMissile)) {
+                _allMissiles.add(thisMissile);
                 addRenderable(thisMissile);
                 return true;
             }
@@ -167,8 +287,8 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
         if(thisMissile == null)
             throw new NullPointerException();
 
-        if (_missilesInFlight.contains(thisMissile)) {
-            _missilesInFlight.remove(thisMissile);
+        if (_allMissiles.contains(thisMissile)) {
+            _allMissiles.remove(thisMissile);
             removeRenderable(thisMissile);
             return true;
         }
@@ -217,21 +337,41 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
         _lastKnownSizeDimensions = _originalDimensions.clone();
         _currentScaleFactor = 1.0f;
         setLayerType(this.LAYER_TYPE_SOFTWARE, null);
-        _state = GameState.inPlay;
-        _siloPreference = SiloGroup.center;
+        //_siloPreference = SiloGroup.none;
         _infinitePlayerMissiles = false;
-        _missilesInFlight = new ArrayList<>();
-        _playerMissileSpeed = 100;
+        _allMissiles = new ArrayList<>();
+        _playerMissileSpeed = 150;
         _enemyMissileSpeed = 15;
+        _currentLevelNumber = -1;
+        _soundPool = new SoundPool(100, AudioManager.STREAM_MUSIC, 0);
+        _soundIdBoom = _soundPool.load(getContext(), R.raw.boom,1);
+        _soundIdLaunch = _soundPool.load(getContext(), R.raw.launch, 1);
+        _stateStartTime = new HashMap<>();
+        _currentScore = 0;
+        _stoppedMissileCount = 0;
+
+        // Game State
+        _state = GameState.newGame;
+        _stateLength = new HashMap<>();
+        _stateTransitionMap = new HashMap<>();
+        _stateLength.put(GameState.levelStart, 2000l );
+        _stateLength.put(GameState.levelResults, 3000l );
+        _stateLength.put(GameState.gameOver, 5000l );
+        _stateTransitionMap.put(GameState.gameOver, GameState.newGame);
+        _stateTransitionMap.put(GameState.levelResults, GameState.levelStart);
+        _stateTransitionMap.put(GameState.levelStart, GameState.inPlay);
+        _stateStartTime.put(GameState.newGame, 0l);
+        _stateStartTime.put(GameState.levelStart, 0l);
+        _stateStartTime.put(GameState.inPlay, 0l);
+        _stateStartTime.put(GameState.levelResults, 0l);
+        _stateStartTime.put(GameState.gameOver, 0l);
+
 
         // Enemy Missiles
         _enemyMissiles = new ArrayList<>();
-        Paint redPaint = PaintBuilder.buildPaint(Paint.Style.FILL, Color.RED, 1);
         for(int i = 0; i < _originalDimensions.getX(); i += 5){
-            //Paint tailColor, Canvas canvas, boolean relaunchable, double blastRadius, GameFieldView caller
-            _enemyMissiles.add(new Missile(MissileType.enemy, true, 20, this));
+            _enemyMissiles.add(new Missile(MissileType.enemy, true, this));
         }
-
 
         // Terrain
         _terrainPath = new PositionedPath(buildPath(VisibleGameObject.terrain), new Point(0,0), PaintBuilder.buildPaint(Paint.Style.FILL, Color.rgb(0xff, 0xff, 0), 1));
@@ -244,10 +384,60 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
         _groundAssets = new ArrayList<>();
         buildGroundAssets();
 
-
+        buildLevels();
 
         for (Missile thisMissile : _enemyMissiles)
             registerMissile(thisMissile);
+
+        startNewLevel();
+    }
+
+    private void buildLevels(){
+        _levels = new ArrayList<>();
+        //                        noEnemyMissiles enemyMissileSpeed  levelLength (seconds)
+        _levels.add(new GameLevel(      10,               15,             15 ));
+        _levels.add(new GameLevel(      15,               20,             15 ));
+        _levels.add(new GameLevel(      20,               25,             17 ));
+        _levels.add(new GameLevel(      25,               30,             20 ));
+        _levels.add(new GameLevel(      30,               35,             22 ));
+        _levels.add(new GameLevel(      35,               40,             25 ));
+        _levels.add(new GameLevel(      40,               45,             27 ));
+        _levels.add(new GameLevel(      45,               50,             30 ));
+
+    }
+
+    private void startNewLevel(){
+        if(++_currentLevelNumber > _levels.size()){
+            startNewGame();
+            return;
+        }
+
+        // Update the score
+
+        // Destroyed scud count
+        _currentScore += _stoppedMissileCount * 20;
+        // Remaining player missiles
+        for(Silo thisSilo : _silos)
+            _currentScore += (thisSilo.getState() == GroundAssetState.visible) ? 0 : 1;
+        // Remaining Cities
+        for(City thisCity : _cities)
+            _currentScore += (thisCity.getState() == GroundAssetState.visible) ? 0 : 1;
+
+        _currentLevel = _levels.get(_currentLevelNumber);
+        _enemyMissileSpeed = _currentLevel.getEnemyMissileSpeed();
+        reviveSilos();
+        _currentLevelStartTime = getAdjustedTimeInMillis();
+        Log.d("Missile Command", "Starting Level " + _currentLevelNumber);
+        changeState(GameState.levelResults);
+    }
+
+    public void startNewGame(){
+        _currentScore = 0;
+        _currentLevelNumber = -1;
+        reviveSilos();
+        reviveCities();
+        buildLevels(); // We don't want exactly the same missile distribution the next time around, do we?
+        startNewLevel();
     }
 
     private void buildGroundAssets(){
@@ -262,7 +452,7 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
         _cities.add(new City(new Point(44, 215)));
         _cities.add(new City(new Point(71, 216)));
         _cities.add(new City(new Point(95, 217)));
-        _cities.add(new City(new Point(148,215)));
+        _cities.add(new City(new Point(148, 215)));
         _cities.add(new City(new Point(180, 212)));
         _cities.add(new City(new Point(208, 216)));
 
@@ -270,6 +460,15 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
             registerGroundAsset(thisCity);
     }
 
+    private void reviveSilos(){
+        for(Silo thisSilo: _silos)
+            thisSilo.reset();
+    }
+
+    private void reviveCities(){
+        for(City thisCity : _cities)
+            thisCity.reset();
+    }
     private void buildSilos(){
         // Silos
         _silos = new ArrayList<>();
@@ -331,15 +530,15 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
         // Get a list of target candidates
         ArrayList<GroundAsset> candidates = new ArrayList<>();
         for(GroundAsset thisAsset : _groundAssets)
-            if(thisAsset._state == GroundAssetState.visible)
+            if(thisAsset.getState() == GroundAssetState.visible)
                 candidates.add(thisAsset);
 
         // Pick a random visible target on the ground and launch a missile at it
         if(!candidates.isEmpty()) {
-            GroundAsset chosenTarget = candidates.get((new Random()).nextInt(candidates.size()));
-            Point randomStartLoc = new Point((new Random()).nextFloat() * _originalDimensions.getX(), 0);
+            GroundAsset chosenTarget = candidates.get(SharedRandom.nextInt(candidates.size()));
+            Point randomStartLoc = new Point(SharedRandom.nextFloat() * _originalDimensions.getX(), 16);
             for(Missile thisMissile : _enemyMissiles)
-                if(thisMissile.tryLaunch(randomStartLoc, chosenTarget.getPosition(),_enemyMissileSpeed))
+                if(thisMissile.tryLaunch(randomStartLoc, chosenTarget.getPosition().clone(),_enemyMissileSpeed))
                     return true;
 
         }
@@ -349,20 +548,26 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
     private void handleTouch(Point position){
         // in play
         if(_state == GameState.inPlay) {
-            launchRandomEnemyMissile();
-
-            // Get a list of qualifying silos to randomly choose from
-            ArrayList<Silo> siloOptions = new ArrayList<>();
-            for(Silo thisSilo : _silos){
-                if(_siloPreference == SiloGroup.none || thisSilo.getGroup() == _siloPreference)
-                    siloOptions.add(thisSilo);
+            // Find first silo that's visible
+            Silo nearestSilo = _silos.get(0);
+            for(Silo thisSilo: _silos){
+                if(thisSilo.getState() == GroundAssetState.visible){
+                    nearestSilo = thisSilo;
+                    break;
+                }
             }
 
-            // Pick a random silo and launch from it
-            Silo chosenSilo;
-            while(!siloOptions.isEmpty() && !(chosenSilo = siloOptions.get((new Random()).nextInt(siloOptions.size()))).tryLaunchMissile(position,_playerMissileSpeed) ){
-                siloOptions.remove(chosenSilo);
+            if(nearestSilo != null) {
+                double nearestDistance = calcDistance(nearestSilo.getPosition(), position);
+                for (Silo thisSilo : _silos) {
+                    if (thisSilo.getState() == GroundAssetState.visible && calcDistance(thisSilo.getPosition(), position) < nearestDistance) {
+                        nearestSilo = thisSilo;
+                        nearestDistance = calcDistance(thisSilo.getPosition(), position);
+                    }
+                }
+                nearestSilo.tryLaunchMissile(position, _playerMissileSpeed);
             }
+
         }
     }
 
@@ -675,6 +880,53 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
         return System.currentTimeMillis() - _timeSpentPaused;
     }
 
+    /* --------------------------------------------------------------*
+    *                         GameLevel                              *
+    * ---------------------------------------------------------------*/
+    private class GameLevel
+    {
+        private long _levelLength; // Seconds
+        private int _enemyMissileSpeed;
+        private int _levelNo;
+        private int _noLaunchedEnemyMissiles;
+        private int _noEnemyMissiles;
+        private Long[] _missileSchedule; // Stores the time (in milliseconds) after level start that enemy missiles are schedules to fire
+        public GameLevel(int noEnemyMissiles, int enemyMissileSpeed, long levelLength)
+        {
+            _noEnemyMissiles = noEnemyMissiles;
+            _enemyMissileSpeed = enemyMissileSpeed;
+            _levelLength = levelLength;
+            _levelNo = _noLevels++;
+            _noLaunchedEnemyMissiles = 0;
+
+            // Generate the missile schedule
+            long levelLengthInMillis = _levelLength * 1000;
+            _missileSchedule = new Long[noEnemyMissiles];
+            for(int i = 0; i < _noEnemyMissiles; ++i){
+                _missileSchedule[i] = (long) (SharedRandom.nextFloat() * (float)(levelLengthInMillis));
+            }
+
+            Arrays.sort(_missileSchedule);
+        }
+
+        public int getNoEnemyMissiles() { return _noEnemyMissiles; }
+        public int getEnemyMissileSpeed() { return _enemyMissileSpeed; }
+        public int getLevelNo() { return _levelNo; }
+        public long getLevelLength(){return _levelLength;}
+        public int getOverdueMissileCount(long timeSinceLevelStart){
+            int noScheduledSoFar = 0;
+            int overdueCount;
+            for(int i = 0; i < _noEnemyMissiles && _missileSchedule[i] <= timeSinceLevelStart; ++i){
+                noScheduledSoFar ++;
+            }
+            overdueCount = noScheduledSoFar - _noLaunchedEnemyMissiles;
+            _noLaunchedEnemyMissiles = noScheduledSoFar;
+            return overdueCount;
+        }
+        public boolean isFinished(){
+            return _noLaunchedEnemyMissiles == _noEnemyMissiles;
+        }
+     }
 
     /* ---------------------------------------------------------------*
     *                         Ground Asset                            *
@@ -699,6 +951,10 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
             return this;
         }
 
+        public void reset(){
+            _state = GroundAssetState.visible;
+        }
+
         public boolean testMissileHit(Missile missile){
             if(missile == null)
                 throw new NullPointerException();
@@ -711,8 +967,8 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
             return false;
         }
         public Point getPosition(){return _position;}
-
         protected abstract void missileHit();
+        public GroundAssetState getState(){return _state;};
     }
 
     // Silo
@@ -725,12 +981,17 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
             super(position);
             _group = group;
             _reusable = reusable;
-            _missile = new Missile(MissileType.player,false,15,_this);
+            _missile = new Missile(MissileType.player,false, _this);
             _path = new PositionedPath( buildPath(VisibleGameObject.silo), position, PaintBuilder.buildPaint(Paint.Style.FILL, Color.BLUE, 1));
         }
 
         public Missile getMissile(){return _missile;}
 
+        @Override
+        public void reset(){
+            super.reset();
+            _missile.cleanup();
+        }
         public SiloGroup getGroup(){return _group;}
 
         public boolean tryLaunchMissile(Point destination, double speed){
@@ -799,23 +1060,26 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
             _state = MissileState.exploding;
             //_launchSoundPlayer.Stop();
             //_explosionSoundPlayer.Play();
+            _soundPool.play(_soundIdBoom, 1, 1, 10, 0, 1);
         }
 
         public boolean tryLaunch(Point launchpadLocation, Point destination, double speed)
         {
+            if(launchpadLocation == null || destination == null)
+                throw new NullPointerException();
+
             if (_state == MissileState.ready)
             {
-                if(_crosshair == null)
-                    _crosshair = new PositionedPath(buildPath(VisibleGameObject.crosshair),destination,PaintBuilder.buildPaint(Paint.Style.STROKE, Color.BLUE,1));
-                else
-                    _crosshair.setPosition(destination);
+                _launchpadLocation = launchpadLocation.clone();
+                _destination = destination.clone();
+                _crosshair = new PositionedPath(buildPath(VisibleGameObject.crosshair),_destination,PaintBuilder.buildPaint(Paint.Style.STROKE, Color.BLUE,1));
+                if(_type == MissileType.player)
+                    _soundPool.play(_soundIdLaunch, 1, 1, 10, 0, 1);
                 //_launchSoundPlayer.Play();
                 //_this.registerMissile(this);
                 _state = MissileState.launching;
                 _tail = new Line(launchpadLocation.clone(), launchpadLocation.clone(), _tailColor);
-                _destination = destination;
                 _launchTime = _caller.getAdjustedTimeInMillis();
-                _launchpadLocation = launchpadLocation;
                 _speed = speed;
 
                 double distanceToTarget = calcDistance(_destination, _launchpadLocation);
@@ -904,7 +1168,7 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
 
             return _state == MissileState.exploding && calcDistance(_currentLocation, otherObjectLocation) <= _explosion.getRadius();
         }
-        public Missile(MissileType type, boolean relaunchable, double blastRadius, GameFieldView caller) {
+        public Missile(MissileType type, boolean relaunchable, GameFieldView caller) {
             _caller = caller;
             _destination = new Point(0, 0);
             _currentLocation = new Point(0,0);
@@ -915,7 +1179,7 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
             _speed = 0;
             _launchTime = 0.0;
             _explodeStartTime = 0.0;
-            _blastRadius = blastRadius;
+            _blastRadius = 15;
             _explosionDuration = 2;
             _frameNo = 0;
             _relaunchable = relaunchable;
@@ -929,7 +1193,7 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
             //_explosionSoundPlayer.Open(new Uri(@currentPath + "\\sounds\\boom.wav")); ;
         }
 
-        public void Cleanup() {
+        public void cleanup() {
             _state = MissileState.ready;
         }
 

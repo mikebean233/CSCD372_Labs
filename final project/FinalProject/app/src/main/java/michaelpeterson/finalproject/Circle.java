@@ -19,8 +19,8 @@ public class Circle extends PositionedPath{
     public Circle setRadius(float newRadius){
         _radius = newRadius;
 
-        _originalPath.rewind();
-        _originalPath.addCircle(0, 0,_radius,Direction.CW);
+        _originalPath.reset();
+        _originalPath.addCircle(0, 0,newRadius ,Direction.CW);
         return this;
     }
 }
