@@ -37,6 +37,17 @@ public class PositionedPath extends Path implements Renderable<PositionedPath>{
         return this;
     }
 
+    public PositionedPath getScaled(float scale){
+        this.set(_originalPath);
+        _scale = scale;
+        Matrix thisMatrix = new Matrix();
+        thisMatrix.setScale(scale, scale);
+        this.transform(thisMatrix);
+        thisMatrix.setTranslate(_position.getX() * scale, _position.getY() * scale);
+        this.transform(thisMatrix);
+        return this;
+    }
+
     public PositionedPath setPaint(Paint newPaint){
         if(newPaint == null)
             throw new NullPointerException();

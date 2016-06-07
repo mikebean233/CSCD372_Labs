@@ -2,10 +2,14 @@ package michaelpeterson.finalproject;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.res.Resources;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.drawable.BitmapDrawable;
+import android.graphics.drawable.Drawable;
 import android.media.AudioManager;
 import android.media.SoundPool;
 import android.util.AttributeSet;
@@ -84,6 +88,7 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
     private int _soundIdLaunch;
     private int _currentScore;
     private int _stoppedMissileCount;
+    private Status _status;
     private GameState _stateBeforePause;
     private HashMap<GameState, Long> _stateStartTime;
     private HashMap<GameState, Long> _stateLength; // (seconds) obviously this does not apply for pause and inPlay
@@ -152,6 +157,8 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
     private void updateGameItems(){
         long currentAdjustedTime = getAdjustedTimeInMillis();
         boolean haveActiveMissiles = false;
+
+        _status.update(_currentScore, _currentLevelNumber, _state);
 
         // inPlay
         if(_state == GameState.inPlay){
@@ -376,10 +383,13 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
         // Terrain
         _terrainPath = new PositionedPath(buildPath(VisibleGameObject.terrain), new Point(0,0), PaintBuilder.buildPaint(Paint.Style.FILL, Color.rgb(0xff, 0xff, 0), 1));
 
+        // Status
+        _status = new Status();
+
         // Build our render list
         _renderList = new ArrayList<>();
         _renderList.add(_terrainPath);
-
+        _renderList.add(_status);
         // Build our ground assets
         _groundAssets = new ArrayList<>();
         buildGroundAssets();
@@ -536,7 +546,7 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
         // Pick a random visible target on the ground and launch a missile at it
         if(!candidates.isEmpty()) {
             GroundAsset chosenTarget = candidates.get(SharedRandom.nextInt(candidates.size()));
-            Point randomStartLoc = new Point(SharedRandom.nextFloat() * _originalDimensions.getX(), 16);
+            Point randomStartLoc = new Point(SharedRandom.nextFloat() * _originalDimensions.getX(), 8);
             for(Missile thisMissile : _enemyMissiles)
                 if(thisMissile.tryLaunch(randomStartLoc, chosenTarget.getPosition().clone(),_enemyMissileSpeed))
                     return true;
@@ -881,6 +891,138 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
     }
 
     /* --------------------------------------------------------------*
+    *                         Status Display                         *
+    * ---------------------------------------------------------------*/
+    private class Status implements Renderable<Status>{
+        private Drawable _levelIndicator;
+        //private Drawable _levelValue;
+        private Drawable _scoreIndicator;
+        //private Drawable _scoreValue;
+
+        private int _currentLevel;
+        private int _currentScore;
+
+        private int _levelLabelWidth = 36;
+        private int _scoreLabelWidth = 39;
+
+        private Point _levelLabelLocation;
+        private Point _scoreLabelLocation;
+
+
+        private int _numberWidth = 7;
+        Resources _resources;
+
+        public void update(int score, int level, GameState state){
+            _currentScore = score;
+            _currentLevel = level;
+
+        }
+
+
+        public Status(){
+            _resources = getContext().getResources();
+            _levelIndicator = new BitmapDrawable(_resources, BitmapFactory.decodeResource(_resources, R.drawable.level));
+            _scoreIndicator = new BitmapDrawable(_resources, BitmapFactory.decodeResource(_resources, R.drawable.score));
+
+            _levelLabelLocation = new Point(0,1);
+            _scoreLabelLocation = new Point(70,1);
+
+        }
+
+        @Override
+        public Status render(Canvas canvas, float scale) {
+            _levelIndicator.setBounds((int)(_levelLabelLocation.getX() * scale),(int)(_levelLabelLocation.getY() * scale),(int)((_levelLabelLocation.getX() + _levelLabelWidth) * scale),(int)(_numberWidth * scale));
+            _scoreIndicator.setBounds((int)(_scoreLabelLocation.getX() * scale),(int)(_scoreLabelLocation.getY() * scale),(int)((_scoreLabelLocation.getX() + _scoreLabelWidth) * scale),(int)(_numberWidth * scale));
+            //_scoreIndicator.setBounds(30,30,50,50);
+
+            _levelIndicator.draw(canvas);
+            _scoreIndicator.draw(canvas);
+
+            drawNumber(_currentLevel, new Point(_levelLabelLocation.getX() + _levelLabelWidth + 3, _levelLabelLocation.getY()), canvas, scale);
+            drawNumber(_currentScore, new Point(_scoreLabelLocation.getX() + _scoreLabelWidth + 3, _scoreLabelLocation.getY()), canvas, scale);
+
+
+            //_levelIndicator.render(canvas, scale);
+            //_scoreIndicator.render(canvas, scale);
+            //_pauseButton.render(canvas, scale);
+
+            return null;
+        }
+
+        private void drawNumber(int number, Point startingLocation, Canvas canvas, float scale){
+            String numberString = (new Integer(number)).toString();
+            int scaledWidth = (int)(scale * _numberWidth);
+            int scaledHeight = (int)(scale * _numberWidth);
+            int scaledStartingX = (int)(scale * startingLocation.getX());
+            int scaledStartingY = (int)(scale * startingLocation.getY());
+            int digitSpacing = 1;
+            int scaledDigitSpacing = (int)(scale * digitSpacing);
+
+            for(int i = 0; i < numberString.length(); ++i){
+                Drawable charDrawable = getBitmapFromChar(numberString.charAt(i));
+                charDrawable.setBounds(scaledStartingX + i * (scaledWidth + scaledDigitSpacing), scaledStartingY, scaledStartingX + i * (scaledWidth + scaledDigitSpacing) + scaledWidth, scaledStartingY + scaledHeight);
+                charDrawable.draw(canvas);
+            }
+
+        }
+
+        Drawable getBitmapFromChar(char input){
+            int resourceId = 0;
+            switch(input){
+                case '0':
+                    resourceId = R.drawable.number_0;
+                break;
+                case '1':
+                    resourceId = R.drawable.number_1;
+                    break;
+                case '2':
+                    resourceId = R.drawable.number_2;
+                    break;
+                case '3':
+                    resourceId = R.drawable.number_3;
+                    break;
+                case '4':
+                    resourceId = R.drawable.number_4;
+                    break;
+                case '5':
+                    resourceId = R.drawable.number_5;
+                    break;
+                case '6':
+                    resourceId = R.drawable.number_6;
+                    break;
+                case '7':
+                    resourceId = R.drawable.number_7;
+                    break;
+                case '8':
+                    resourceId = R.drawable.number_8;
+                    break;
+                case '9':
+                    resourceId = R.drawable.number_9;
+                    break;
+            }
+            return new BitmapDrawable(_resources, BitmapFactory.decodeResource(_resources, resourceId));
+        }
+
+
+    }
+/*
+    private class TextPath extends PositionedPath implements Renderable {
+        String text;
+
+        public TextPath(String text, int height){
+            _drawable =
+        }
+
+        @Override
+        public Object render(Canvas canvas, float scale) {
+            return null;
+        }
+    }
+*/
+
+
+
+    /* --------------------------------------------------------------*
     *                         GameLevel                              *
     * ---------------------------------------------------------------*/
     private class GameLevel
@@ -1179,7 +1321,7 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
             _speed = 0;
             _launchTime = 0.0;
             _explodeStartTime = 0.0;
-            _blastRadius = 15;
+            _blastRadius = 12.5;
             _explosionDuration = 2;
             _frameNo = 0;
             _relaunchable = relaunchable;
