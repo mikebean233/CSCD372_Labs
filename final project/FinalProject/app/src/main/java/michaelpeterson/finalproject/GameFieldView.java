@@ -8,6 +8,7 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.PorterDuff;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.media.AudioManager;
@@ -86,6 +87,7 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
     private int _currentLevelNumber;
     private int _soundIdBoom;
     private int _soundIdLaunch;
+    private int _soundIdLevel;
     private int _currentScore;
     private int _stoppedMissileCount;
     private Status _status;
@@ -103,8 +105,6 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec){
         //setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), MeasureSpec.getSize(heightMeasureSpec));
-        _timeSpentPaused = 0;
-
         float desiredWidth = (float) MeasureSpec.getSize(widthMeasureSpec);
         float desiredHeight  = (float) MeasureSpec.getSize(heightMeasureSpec);
         float finalHeight = 0;
@@ -114,7 +114,7 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
         if(desiredAspectRatio > _aspectRatio || desiredWidth == 0){
             // we are keeping the desired height
             finalHeight = desiredHeight;
-            finalWidth  = desiredHeight * _aspectRatio;
+            finalWidth  = desiredHeight / _aspectRatio;
         }
         else if(desiredAspectRatio <= _aspectRatio || desiredHeight == 0) {
             // we are keeping the desired width
@@ -140,10 +140,35 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
         initialize();
     }
 
+    public void pause(){
+        if(_state != GameState.paused) {
+            if (_stateBeforePause != GameState.paused)
+                _stateBeforePause = _state;
+            changeState(GameState.paused);
+        }
+    }
+
+    public void resume(){
+        if(_state == GameState.paused) {
+            _timeSpentPaused += getAdjustedTimeInMillis() - _stateStartTime.get(GameState.paused);
+            changeState(_stateBeforePause);
+        }
+    }
+
+    public void togglePause(){
+        if(_state == GameState.paused)
+            resume();
+        else
+            pause();
+    }
+
+
     private Long changeState(GameState newState){
         Log.d("--------------", _state + " -> " + newState);
         long oldTime = _stateStartTime.get(_state);
         _stateStartTime.put(_state = newState, getAdjustedTimeInMillis());
+        if(newState == GameState.levelStart)
+            _soundPool.play(_soundIdLevel, 1, 1, 10, 0, 1);
         return oldTime;
     }
 
@@ -190,7 +215,7 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
                 for(Missile launchingMissile : launchingMissiles){
                     if(launchingMissile.getType() == MissileType.enemy && explodingMissile.checkForCollision(launchingMissile.getLocation())) {
                         launchingMissile.detonate();
-                        ++_stoppedMissileCount;
+                        _stoppedMissileCount++;
                     }
                 }
             }
@@ -225,7 +250,7 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
                 if (standingCityCount == 0)
                     changeState(GameState.gameOver);
                 else if(_currentLevel.isFinished())
-                    startNewLevel();
+                    startNewLevel(false);
 
                 return;
             }
@@ -269,16 +294,6 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
         return false;
     }
 
-    public boolean removeRenderable(Renderable item){
-        if(item == null)
-            throw new NullPointerException();
-        if(_renderList.contains(item)){
-            _renderList.remove(item);
-            return true;
-        }
-        return false;
-    }
-
     public boolean registerMissile(Missile thisMissile){
         if(thisMissile == null)
             throw new NullPointerException();
@@ -287,18 +302,6 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
                 addRenderable(thisMissile);
                 return true;
             }
-        return false;
-    }
-
-    public boolean unRegisterMissile(Missile thisMissile){
-        if(thisMissile == null)
-            throw new NullPointerException();
-
-        if (_allMissiles.contains(thisMissile)) {
-            _allMissiles.remove(thisMissile);
-            removeRenderable(thisMissile);
-            return true;
-        }
         return false;
     }
 
@@ -313,18 +316,6 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
          return false;
     }
 
-    public boolean unRegisterGroundAsset(GroundAsset thisAsset){
-        if(thisAsset == null)
-            throw new NullPointerException();
-
-        if (_groundAssets.contains(thisAsset)) {
-            _groundAssets.remove(thisAsset);
-            removeRenderable(thisAsset);
-            return true;
-        }
-        return false;
-    }
-    
     public void start(final Activity activity){
         Timer animationTimer = new Timer();
         final GameFieldView self = this;
@@ -351,8 +342,9 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
         _enemyMissileSpeed = 15;
         _currentLevelNumber = -1;
         _soundPool = new SoundPool(100, AudioManager.STREAM_MUSIC, 0);
-        _soundIdBoom = _soundPool.load(getContext(), R.raw.boom,1);
-        _soundIdLaunch = _soundPool.load(getContext(), R.raw.launch, 1);
+        _soundIdBoom    = _soundPool.load(getContext(), R.raw.boom,1);
+        _soundIdLaunch  = _soundPool.load(getContext(), R.raw.launch, 1);
+        _soundIdLevel   = _soundPool.load(getContext(), R.raw.levelend, 1);
         _stateStartTime = new HashMap<>();
         _currentScore = 0;
         _stoppedMissileCount = 0;
@@ -361,7 +353,7 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
         _state = GameState.newGame;
         _stateLength = new HashMap<>();
         _stateTransitionMap = new HashMap<>();
-        _stateLength.put(GameState.levelStart, 2000l );
+        _stateLength.put(GameState.levelStart, 3000l );
         _stateLength.put(GameState.levelResults, 3000l );
         _stateLength.put(GameState.gameOver, 5000l );
         _stateTransitionMap.put(GameState.gameOver, GameState.newGame);
@@ -372,6 +364,7 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
         _stateStartTime.put(GameState.inPlay, 0l);
         _stateStartTime.put(GameState.levelResults, 0l);
         _stateStartTime.put(GameState.gameOver, 0l);
+        _stateStartTime.put(GameState.paused, 0l);
 
 
         // Enemy Missiles
@@ -399,46 +392,52 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
         for (Missile thisMissile : _enemyMissiles)
             registerMissile(thisMissile);
 
-        startNewLevel();
+        startNewGame();
     }
 
     private void buildLevels(){
         _levels = new ArrayList<>();
         //                        noEnemyMissiles enemyMissileSpeed  levelLength (seconds)
-        _levels.add(new GameLevel(      10,               15,             15 ));
-        _levels.add(new GameLevel(      15,               20,             15 ));
-        _levels.add(new GameLevel(      20,               25,             17 ));
-        _levels.add(new GameLevel(      25,               30,             20 ));
-        _levels.add(new GameLevel(      30,               35,             22 ));
-        _levels.add(new GameLevel(      35,               40,             25 ));
-        _levels.add(new GameLevel(      40,               45,             27 ));
-        _levels.add(new GameLevel(      45,               50,             30 ));
+        _levels.add(new GameLevel(      10,               150,             15 ));
+        _levels.add(new GameLevel(      15,               200,             15 ));
+        _levels.add(new GameLevel(      20,               250,             17 ));
+        _levels.add(new GameLevel(      25,               300,             20 ));
+        _levels.add(new GameLevel(30, 35, 22));
+        _levels.add(new GameLevel(35, 40, 25));
+        _levels.add(new GameLevel(40, 45, 27));
+        _levels.add(new GameLevel(45, 50, 30));
 
     }
 
-    private void startNewLevel(){
+    private void startNewLevel(boolean newGame){
         if(++_currentLevelNumber > _levels.size()){
             startNewGame();
             return;
         }
+        if(!newGame) {
+            // Update the score
+            // Destroyed scud count
+            _currentScore += _stoppedMissileCount * 20;
+            // Remaining player missiles
+            for (Silo thisSilo : _silos)
+                _currentScore += (thisSilo.getState() == GroundAssetState.invisible) ? 0 : 40;
+            // Remaining Cities
+            for (City thisCity : _cities)
+                _currentScore += (thisCity.getState() == GroundAssetState.invisible) ? 0 : 100;
+        }else
+            _currentScore = 0;
 
-        // Update the score
-
-        // Destroyed scud count
-        _currentScore += _stoppedMissileCount * 20;
-        // Remaining player missiles
-        for(Silo thisSilo : _silos)
-            _currentScore += (thisSilo.getState() == GroundAssetState.visible) ? 0 : 1;
-        // Remaining Cities
-        for(City thisCity : _cities)
-            _currentScore += (thisCity.getState() == GroundAssetState.visible) ? 0 : 1;
+        _stoppedMissileCount = 0;
 
         _currentLevel = _levels.get(_currentLevelNumber);
         _enemyMissileSpeed = _currentLevel.getEnemyMissileSpeed();
         reviveSilos();
         _currentLevelStartTime = getAdjustedTimeInMillis();
         Log.d("Missile Command", "Starting Level " + _currentLevelNumber);
-        changeState(GameState.levelResults);
+        if(newGame)
+            changeState(GameState.levelStart);
+        else
+            changeState(GameState.levelResults);
     }
 
     public void startNewGame(){
@@ -447,7 +446,7 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
         reviveSilos();
         reviveCities();
         buildLevels(); // We don't want exactly the same missile distribution the next time around, do we?
-        startNewLevel();
+        startNewLevel(true);
     }
 
     private void buildGroundAssets(){
@@ -557,7 +556,10 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
 
     private void handleTouch(Point position){
         // in play
-        if(_state == GameState.inPlay) {
+        if(_status.pauseResumeButtonHit(position)){
+            togglePause();
+        }
+        else if(_state == GameState.inPlay) {
             // Find first silo that's visible
             Silo nearestSilo = _silos.get(0);
             for(Silo thisSilo: _silos){
@@ -902,19 +904,40 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
         private int _currentLevel;
         private int _currentScore;
 
+        // Status Bar
         private int _levelLabelWidth = 36;
         private int _scoreLabelWidth = 39;
-
         private Point _levelLabelLocation;
         private Point _scoreLabelLocation;
 
+        // Level Start
+        private int _levelStartLabelWidth = 112;
+        private Point _levelStartLabelLocation;
 
+        // Game Over
+        private int _gameOverLabelWidth = 165;
+        private int _gameOverLabelHeight = 70;
+        private Point _gameOverLabelLocation;
+
+        // New Score
+        private int _newScoreLabelWidth = 69;
+        private Point _newScoreLabel; 
+
+        // Paused
+        private int _pausedLabelWidth = 47;
+        private Point _pausedLabelLocation;
+
+        // PauseResume Button
+        private int _pauseResumeButtonWidth = 98;
+        private int _pauseResumeButtonHeight;
+        private Point _pauseResumeButtonLocation;
+        
         private int _numberWidth = 7;
         Resources _resources;
 
         public void update(int score, int level, GameState state){
             _currentScore = score;
-            _currentLevel = level;
+            _currentLevel = level + 1;
 
         }
 
@@ -926,25 +949,69 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
 
             _levelLabelLocation = new Point(0,1);
             _scoreLabelLocation = new Point(70,1);
+            _gameOverLabelLocation = new Point(50, 76);
+            _levelStartLabelLocation = new Point(66,66);
+            _newScoreLabel = new Point(66,66);
+            _pausedLabelLocation = new Point(102,66);
+            _pauseResumeButtonLocation = new Point(158, 0);
+            _pauseResumeButtonHeight = _numberWidth*2 + 8;
+        }
 
+        public boolean pauseResumeButtonHit(Point touchLocation){
+            return  (touchLocation.getX() >= _pauseResumeButtonLocation.getX()) &&
+                    (touchLocation.getY() >= _pauseResumeButtonLocation.getY()) &&
+                    (touchLocation.getX() <= _pauseResumeButtonLocation.getX() + _pauseResumeButtonWidth) &&
+                    (touchLocation.getY() <= _pauseResumeButtonLocation.getY() + _pauseResumeButtonHeight);
         }
 
         @Override
         public Status render(Canvas canvas, float scale) {
-            _levelIndicator.setBounds((int)(_levelLabelLocation.getX() * scale),(int)(_levelLabelLocation.getY() * scale),(int)((_levelLabelLocation.getX() + _levelLabelWidth) * scale),(int)(_numberWidth * scale));
-            _scoreIndicator.setBounds((int)(_scoreLabelLocation.getX() * scale),(int)(_scoreLabelLocation.getY() * scale),(int)((_scoreLabelLocation.getX() + _scoreLabelWidth) * scale),(int)(_numberWidth * scale));
-            //_scoreIndicator.setBounds(30,30,50,50);
+            // In Play
+            if(_state == GameState.inPlay) {
+                _levelIndicator.setBounds((int) (_levelLabelLocation.getX() * scale), (int) (_levelLabelLocation.getY() * scale), (int) ((_levelLabelLocation.getX() + _levelLabelWidth) * scale), (int) ((_levelLabelLocation.getY() + _numberWidth) * scale));
+                _scoreIndicator.setBounds((int) (_scoreLabelLocation.getX() * scale), (int) (_scoreLabelLocation.getY() * scale), (int) ((_scoreLabelLocation.getX() + _scoreLabelWidth) * scale), (int) ((_scoreLabelLocation.getY() + _numberWidth) * scale));
+                _levelIndicator.draw(canvas);
+                _scoreIndicator.draw(canvas);
+                drawNumber(_currentLevel, new Point(_levelLabelLocation.getX() + _levelLabelWidth + 3, _levelLabelLocation.getY()), canvas, scale);
+                drawNumber(_currentScore, new Point(_scoreLabelLocation.getX() + _scoreLabelWidth + 3, _scoreLabelLocation.getY()), canvas, scale);
+            }
 
-            _levelIndicator.draw(canvas);
-            _scoreIndicator.draw(canvas);
+            // levelStart
+            if(_state == GameState.levelStart){
+                Drawable levelStartLabel = new BitmapDrawable(_resources, BitmapFactory.decodeResource(_resources, R.drawable.newlevel));
+                //_scoreIndicator.setBounds((int)(_scoreLabelLocation.getX()      * scale), (int)(_scoreLabelLocation.getY()      * scale),(int)((_scoreLabelLocation.getX()       + _scoreLabelWidth)      * scale), (int)(_numberWidth * scale));
+                levelStartLabel.setBounds((int)(_levelStartLabelLocation.getX() * scale), (int)(_levelStartLabelLocation.getY() * scale), (int)((_levelStartLabelLocation.getX() + _levelStartLabelWidth) * scale), (int)((_levelStartLabelLocation.getY() + _numberWidth) * scale));
+                levelStartLabel.draw(canvas);
+                drawNumber(_currentLevel, new Point(_levelStartLabelLocation.getX() + _levelStartLabelWidth + 3, _levelStartLabelLocation.getY()), canvas, scale);
+            }
 
-            drawNumber(_currentLevel, new Point(_levelLabelLocation.getX() + _levelLabelWidth + 3, _levelLabelLocation.getY()), canvas, scale);
-            drawNumber(_currentScore, new Point(_scoreLabelLocation.getX() + _scoreLabelWidth + 3, _scoreLabelLocation.getY()), canvas, scale);
+            // Game Over
+            if(_state == GameState.gameOver){
+                Drawable gameOverLabel = new BitmapDrawable(_resources, BitmapFactory.decodeResource(_resources, R.drawable.theend));
+                gameOverLabel.setBounds((int) (_gameOverLabelLocation.getX() * scale), (int)(_gameOverLabelLocation.getY() * scale), (int)((_gameOverLabelLocation.getX() + _gameOverLabelWidth) * scale),  (int)((_gameOverLabelLocation.getY() + _gameOverLabelHeight) * scale));
+                gameOverLabel.draw(canvas);
+            }
 
+            // Level Results
+            if(_state == GameState.levelResults){
+                Drawable levelResultsLabel = new BitmapDrawable(_resources, BitmapFactory.decodeResource(_resources, R.drawable.newscore));
+                levelResultsLabel.setBounds((int) (_newScoreLabel.getX() * scale), (int)(_newScoreLabel.getY() * scale), (int)((_newScoreLabel.getX() + _newScoreLabelWidth) * scale),  (int)((_newScoreLabel.getY() + _numberWidth) * scale));
+                levelResultsLabel.draw(canvas);
+                
+                drawNumber(_currentScore, new Point(_newScoreLabel.getX() + _newScoreLabelWidth + 3, _newScoreLabel.getY()), canvas, scale);
+            }
 
-            //_levelIndicator.render(canvas, scale);
-            //_scoreIndicator.render(canvas, scale);
-            //_pauseButton.render(canvas, scale);
+            // Paused
+            if(_state == GameState.paused) {
+                Drawable pausedLabel = new BitmapDrawable(_resources, BitmapFactory.decodeResource(_resources, R.drawable.paused));
+                pausedLabel.setBounds((int) (_pausedLabelLocation.getX() * scale), (int) (_pausedLabelLocation.getY() * scale), (int) ((_pausedLabelLocation.getX() + _pausedLabelWidth) * scale), (int) ((_pausedLabelLocation.getY() + _numberWidth) * scale));
+                pausedLabel.draw(canvas);
+            }
+
+            Drawable pauseResumeButton = new BitmapDrawable(_resources, BitmapFactory.decodeResource(_resources, (_state == GameState.paused) ? R.drawable.resume : R.drawable.pause));
+            pauseResumeButton.setBounds((int)(_pauseResumeButtonLocation.getX() * scale), (int)(_pauseResumeButtonLocation.getY() * scale), (int)((_pauseResumeButtonLocation.getX() + _pauseResumeButtonWidth) * scale), (int)((_pauseResumeButtonLocation.getY() + _pauseResumeButtonHeight) * scale));
+            pauseResumeButton.draw(canvas);
+
 
             return null;
         }
@@ -956,9 +1023,9 @@ public class GameFieldView extends View implements Runnable, View.OnTouchListene
             int scaledStartingX = (int)(scale * startingLocation.getX());
             int scaledStartingY = (int)(scale * startingLocation.getY());
             int digitSpacing = 1;
-            int scaledDigitSpacing = (int)(scale * digitSpacing);
+            int scaledDigitSpacing = (int) (scale * digitSpacing);
 
-            for(int i = 0; i < numberString.length(); ++i){
+            for (int i = 0; i < numberString.length(); ++i) {
                 Drawable charDrawable = getBitmapFromChar(numberString.charAt(i));
                 charDrawable.setBounds(scaledStartingX + i * (scaledWidth + scaledDigitSpacing), scaledStartingY, scaledStartingX + i * (scaledWidth + scaledDigitSpacing) + scaledWidth, scaledStartingY + scaledHeight);
                 charDrawable.draw(canvas);
