@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:custom="http://schemas.android.com/apk/res-auto">
+
+    <michaelpeterson.finalproject.NumberPickerPreference
+        android:key="initial_scud_speed"
+        android:defaultValue="15"
+        android:title="Initial Scud Speed"
+        custom:min="8"
+        custom:max="40"
+        custom:wrap="false"
+    />
+
+    <michaelpeterson.finalproject.NumberPickerPreference
+        android:key="scuds_per_level"
+        android:title="Scuds Per Level"
+        android:defaultValue="5"
+        custom:min="5"
+        custom:max="30"
+        custom:wrap="false"
+    />
+</PreferenceScreen>
